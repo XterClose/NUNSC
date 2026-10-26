@@ -1,4 +1,4 @@
-# CODEX Storm Launcher — Base Source v0.2.0
+# CODEX Storm Launcher — Base Source v0.1.0
 
 Proyek Android native Kotlin untuk launcher yang berfokus pada Naruto x Boruto: Ultimate Ninja Storm Connections (file game Windows `.exe`).
 
