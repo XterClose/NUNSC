@@ -1,124 +1,126 @@
 name: Build CODEX Storm APK
 
 on:
-  workflow_dispatch:
-  push:
-    branches:
-      - main
+workflow_dispatch:
+push:
+branches:
+- main
 
 permissions:
-  contents: read
+contents: read
 
 jobs:
-  build:
-    name: Build Android APK
-    runs-on: ubuntu-latest
+build:
+name: Build Android APK
+runs-on: ubuntu-latest
 
-    steps:
-      # 1. Download source dari repository
-      - name: Checkout repository
-        uses: actions/checkout@v4
+steps:
+  - name: Checkout repository
+    uses: actions/checkout@v4
 
-      # 2. Siapkan Java
-      - name: Setup Java JDK
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
+  - name: Setup Java JDK
+    uses: actions/setup-java@v4
+    with:
+      distribution: temurin
+      java-version: '17'
 
-      # 3. Siapkan Android SDK
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+  - name: Setup Android SDK
+    uses: android-actions/setup-android@v3
 
-      # 4. Cari source project atau ZIP
-      - name: Locate Android project
-        shell: bash
-        run: |
-          set -e
+  - name: Install Android SDK packages
+    shell: bash
+    run: |
+      set -e
+      sdkmanager --install \
+        "platform-tools" \
+        "platforms;android-35" \
+        "build-tools;35.0.0"
 
-          if [ -f "app/build.gradle.kts" ]; then
-            echo "PROJECT_DIR=." >> "$GITHUB_ENV"
-            echo "Project ditemukan di root repository."
-            exit 0
-          fi
+      yes | sdkmanager --licenses >/dev/null || true
 
-          ZIP_FILE="$(find . -maxdepth 3 -type f \
-            -iname '*.zip' \
-            -not -path './.git/*' | head -n 1)"
+  - name: Locate Android project
+    shell: bash
+    run: |
+      set -e
 
-          if [ -z "$ZIP_FILE" ]; then
-            echo "::error::Project Android dan file ZIP tidak ditemukan."
-            echo "Upload source ZIP atau folder app ke repository."
-            exit 1
-          fi
+      if [ -f "app/build.gradle.kts" ]; then
+        echo "PROJECT_DIR=." >> "$GITHUB_ENV"
+        exit 0
+      fi
 
-          echo "ZIP ditemukan: $ZIP_FILE"
+      ZIP_FILE="$(find . -maxdepth 3 -type f \
+        -iname '*.zip' \
+        -not -path './.git/*' | head -n 1)"
 
-          mkdir -p extracted
-          unzip -o "$ZIP_FILE" -d extracted
+      if [ -z "$ZIP_FILE" ]; then
+        echo "::error::File ZIP project tidak ditemukan."
+        exit 1
+      fi
 
-          PROJECT_SETTINGS="$(find extracted \
-            -type f -name 'settings.gradle.kts' \
-            -not -path '*/.gradle/*' | head -n 1)"
+      echo "ZIP ditemukan: $ZIP_FILE"
+      mkdir -p extracted
+      unzip -o "$ZIP_FILE" -d extracted
 
-          if [ -z "$PROJECT_SETTINGS" ]; then
-            echo "::error::settings.gradle.kts tidak ditemukan di ZIP."
-            exit 1
-          fi
+      SETTINGS_FILE="$(find extracted -type f \
+        -name 'settings.gradle.kts' | head -n 1)"
 
-          PROJECT_PATH="${PROJECT_SETTINGS%/settings.gradle.kts}"
+      if [ -z "$SETTINGS_FILE" ]; then
+        echo "::error::settings.gradle.kts tidak ditemukan."
+        exit 1
+      fi
 
-          if [ ! -f "$PROJECT_PATH/app/build.gradle.kts" ]; then
-            echo "::error::File app/build.gradle.kts tidak ditemukan."
-            echo "Struktur project Android tidak lengkap."
-            exit 1
-          fi
+      PROJECT_PATH="${SETTINGS_FILE%/settings.gradle.kts}"
 
-          echo "Project ditemukan: $PROJECT_PATH"
-          echo "PROJECT_DIR=$PROJECT_PATH" >> "$GITHUB_ENV"
+      if [ ! -f "$PROJECT_PATH/app/build.gradle.kts" ]; then
+        echo "::error::Folder app atau build.gradle.kts tidak ditemukan."
+        find extracted -maxdepth 5 -type f | head -n 100
+        exit 1
+      fi
 
-      # 5. Siapkan Gradle
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.9'
+      echo "PROJECT_DIR=$PROJECT_PATH" >> "$GITHUB_ENV"
 
-      # 6. Build APK debug
-      - name: Build debug APK
-        shell: bash
-        run: |
-          set -e
-          cd "$PROJECT_DIR"
+  - name: Setup Gradle
+    uses: gradle/actions/setup-gradle@v4
+    with:
+      gradle-version: '8.9'
 
-          echo "Lokasi project:"
-          pwd
+  - name: Check project configuration
+    shell: bash
+    run: |
+      set -e
+      cd "$PROJECT_DIR"
+      echo "Project directory: $(pwd)"
+      echo "Gradle files:"
+      find . -maxdepth 3 \
+        -name '*.gradle' -o -name '*.gradle.kts' \
+        -type f
 
-          echo "Menjalankan Gradle..."
-          gradle --no-daemon assembleDebug
+  - name: Build debug APK
+    shell: bash
+    run: |
+      set -e
+      cd "$PROJECT_DIR"
+      gradle --no-daemon assembleDebug
 
-      # 7. Periksa hasil build
-      - name: Verify APK
-        shell: bash
-        run: |
-          set -e
+  - name: Verify APK
+    shell: bash
+    run: |
+      set -e
+      APK="$PROJECT_DIR/app/build/outputs/apk/debug/app-debug.apk"
 
-          APK_PATH="$PROJECT_DIR/app/build/outputs/apk/debug/app-debug.apk"
+      if [ ! -f "$APK" ]; then
+        echo "::error::Build selesai tetapi APK tidak ditemukan."
+        find "$PROJECT_DIR/app/build/outputs" \
+          -type f 2>/dev/null || true
+        exit 1
+      fi
 
-          if [ ! -f "$APK_PATH" ]; then
-            echo "::error::APK tidak ditemukan setelah build."
-            find "$PROJECT_DIR/app/build/outputs" \
-              -type f 2>/dev/null || true
-            exit 1
-          fi
+      ls -lh "$APK"
 
-          echo "APK berhasil dibuat:"
-          ls -lh "$APK_PATH"
-
-      # 8. Upload APK agar bisa diunduh
-      - name: Upload APK artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: CODEX-Storm-debug-APK
-          path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/app-debug.apk
-          if-no-files-found: error
-          retention-days: 7
+  - name: Upload APK
+    uses: actions/upload-artifact@v4
+    with:
+      name: CODEX-Storm-debug-APK
+      path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/app-debug.apk
+      if-no-files-found: error
+      retention-days: 7
